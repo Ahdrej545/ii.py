@@ -3,6 +3,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 from world import create_new_world, ImmortalityWorld
 
@@ -52,12 +53,12 @@ class App:
         self.canvas.pack(fill='both', expand=True, pady=8)
         self.canvas.bind('<Configure>', lambda e: self.draw_map())
         ttk.Label(left, text='Лента событий', font=('Segoe UI', 12, 'bold')).pack(anchor='w')
-        self.events = tk.Text(left, height=10, wrap='word', bg='#eff5f3', font=('Segoe UI', 10))
+        self.events = ScrolledText(left, height=10, wrap='word', bg='#eff5f3', font=('Segoe UI', 10))
         self.events.pack(fill='both', expand=True)
         self.people = ttk.Combobox(right, state='readonly')
         self.people.pack(fill='x', padx=10)
         self.people.bind('<<ComboboxSelected>>', lambda e: self.select(self.people.get()))
-        self.card = tk.Text(right, wrap='word', bg='#f6f4ee', font=('Segoe UI', 11), padx=16, pady=14)
+        self.card = ScrolledText(right, wrap='word', bg='#f6f4ee', font=('Segoe UI', 11), padx=16, pady=14)
         self.card.pack(fill='both', expand=True, padx=(10, 0), pady=8)
         self.notice = tk.Label(root, text='', anchor='w', bg='#101d2b', fg='#b9cdd6')
         self.notice.pack(fill='x', padx=20, pady=(0, 10))
@@ -67,6 +68,7 @@ class App:
     def select(self, name):
         self.selected = name
         self.refresh()
+        self.card.yview_moveto(0)
 
     def draw_map(self):
         c = self.canvas
@@ -89,10 +91,12 @@ class App:
 
     @staticmethod
     def set_text(widget, text):
+        position = widget.yview()[0]
         widget.configure(state='normal')
         widget.delete('1.0', 'end')
         widget.insert('1.0', text)
         widget.configure(state='disabled')
+        widget.yview_moveto(position)
 
     def refresh(self):
         self.clock.configure(text=f'{self.world.time:%d.%m.%Y · %H:%M}  |  {self.world.config.current_weather}')
@@ -101,10 +105,24 @@ class App:
         h = next(p for p in self.world.inhabitants if p.name == self.selected)
         labels = dict(hunger='Сытость', energy='Энергия', social='Общение', happiness='Счастье')
         needs = '\n'.join(f'{labels[k]:12} {"■"*round(v*10)} {v:.0%}' for k, v in h.needs.items())
-        relations = '\n'.join(f'{name}: {v:+.2f}' for name, v in h.relationships.items()) or 'Пока никого'
+        relations = []
+        for name, value in h.relationships.items():
+            history = h.relationship_history.get(name, [])
+            reasons = '\n'.join(f'  {e["time"][5:16].replace("T", " ")} · {e["cause"]} ({e["delta"]:+.2f}): {e["detail"]}'
+                                for e in history[-3:]) or '  Причины в этом сохранении ещё не записаны'
+            relations.append(f'{name}: {value:+.2f}\n{reasons}')
+        relations = '\n\n'.join(relations) or 'Пока никого'
+        goal = h.goal
+        state = dict(active='В работе', completed='Достигнута', failed='Не удалась')[goal['state']]
+        goal_text = (f'{goal["title"]} · {state}\n'
+                     f'Прогресс: {goal["progress"]}/{goal["target"]}\n'
+                     f'Срок: {goal["deadline"][:16].replace("T", " ")}\n{goal["note"]}')
+        if h.goal_history:
+            goal_text += '\nПрошлые цели: ' + '; '.join(
+                f'{g["title"]} — {"успех" if g["state"] == "completed" else "неудача"}' for g in h.goal_history[-3:])
         memories = '\n\n'.join(f'{m["time"]}\n{m["event"]}' for m in reversed(h.memories[-8:])) or 'История только начинается'
         self.set_text(self.card, f'{h.name}, {h.age} лет\n{h.personality}\n\n{h.location} · {h.status}\n\n'
-                      f'ПОЧЕМУ ЭТО РЕШЕНИЕ\n{h.reason}\n\nПОТРЕБНОСТИ\n{needs}\n\nОТНОШЕНИЯ (−1…+1)\n{relations}\n\nВОСПОМИНАНИЯ\n{memories}')
+                      f'ЛИЧНАЯ ЦЕЛЬ\n{goal_text}\n\nПОЧЕМУ ЭТО РЕШЕНИЕ\n{h.reason}\n\nПОТРЕБНОСТИ\n{needs}\n\nОТНОШЕНИЯ И ПРИЧИНЫ (−1…+1)\n{relations}\n\nВОСПОМИНАНИЯ\n{memories}')
         self.set_text(self.events, '\n\n'.join(reversed(self.world.events_log[-25:])))
         self.notice.configure(text=self.world.ai.last_error or (
             'DeepSeek включён · диалоги через API' if self.world.ai.api_key else 'Локальная демонстрация · ключ не нужен · 1 шаг = 1 игровой час'))
